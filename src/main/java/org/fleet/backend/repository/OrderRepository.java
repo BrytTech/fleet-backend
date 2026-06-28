@@ -54,5 +54,5 @@ public interface OrderRepository extends JpaRepository<Order, Long> {
 
     // Find active order for a store (pickup or dropoff)
     @Query("SELECT o FROM Order o WHERE (o.pickupStore = :store OR o.dropoffStore = :store) AND o.orderStatus != :status")
-    Optional<Order> findActiveOrderByStore(@Param("store") Store store, @Param("status") OrderStatus status);
+    List<Order> findActiveOrderByStore(@Param("store") Store store, @Param("status") OrderStatus status);
 }

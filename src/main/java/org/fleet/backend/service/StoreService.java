@@ -120,9 +120,11 @@ public class StoreService {
     }
 
     private Long getActiveOrderId(Store store) {
-        return orderRepository.findActiveOrderByStore(store, OrderStatus.PAYMENT_RELEASED)
-                .map(Order::getId)
-                .orElse(null);
+        List<Order> activeOrders = orderRepository.findActiveOrderByStore(store, OrderStatus.PAYMENT_RELEASED);
+        if (activeOrders.isEmpty()) {
+            return null;
+        }
+        return activeOrders.get(0).getId();
     }
 }
 

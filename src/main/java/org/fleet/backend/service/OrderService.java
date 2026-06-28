@@ -182,7 +182,6 @@ public class OrderService {
         Order order = orderRepository.findById(orderId)
                 .orElseThrow(() -> new RuntimeException("Order not found"));
 
-        // Verify rider is assigned
         if (order.getRider() == null || !order.getRider().getId().equals(rider.getRiderProfile().getId())) {
             throw new RuntimeException("You are not assigned to this order");
         }

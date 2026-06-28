@@ -26,7 +26,8 @@ public class AzaPaymentService {
         String url = apiUrl + "/sessions";
 
         HttpHeaders headers = new HttpHeaders();
-        headers.set("Authorization", "Bearer " + apiKey);
+        //FIX: Use X-Api-Key instead of Bearer token
+        headers.set("X-Api-Key", apiKey);
         headers.set("Content-Type", "application/json");
 
         Map<String, Object> requestBody = new HashMap<>();
@@ -37,14 +38,19 @@ public class AzaPaymentService {
         requestBody.put("success_url", "fleet://payment/success");
         requestBody.put("cancel_url", "fleet://payment/cancel");
 
+        System.out.println("Aza API Key: " + apiKey.substring(0, 10) + "...");
+        System.out.println("Aza Request: " + requestBody);
+
         HttpEntity<Map<String, Object>> request = new HttpEntity<>(requestBody, headers);
 
         try {
             ResponseEntity<Map> response = restTemplate.exchange(
                     url, HttpMethod.POST, request, Map.class
             );
+            System.out.println("Aza Response: " + response.getBody());
             return response.getBody();
         } catch (Exception e) {
+            System.err.println("Aza Error: " + e.getMessage());
             throw new RuntimeException("Failed to create Aza session: " + e.getMessage());
         }
     }
