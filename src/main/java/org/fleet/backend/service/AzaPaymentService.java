@@ -26,7 +26,6 @@ public class AzaPaymentService {
         String url = apiUrl + "/sessions";
 
         HttpHeaders headers = new HttpHeaders();
-        //FIX: Use X-Api-Key instead of Bearer token
         headers.set("X-Api-Key", apiKey);
         headers.set("Content-Type", "application/json");
 
@@ -48,7 +47,27 @@ public class AzaPaymentService {
                     url, HttpMethod.POST, request, Map.class
             );
             System.out.println("Aza Response: " + response.getBody());
-            return response.getBody();
+
+            Map<String, Object> responseBody = response.getBody();
+
+            // Check if success and extract data
+            if (responseBody != null && Boolean.TRUE.equals(responseBody.get("success"))) {
+                Map<String, Object> data = (Map<String, Object>) responseBody.get("data");
+
+                // Aza returns "checkoutUrl", not "url"
+                String checkoutUrl = (String) data.get("checkoutUrl");
+                String sessionId = (String) data.get("id");
+
+                // Return in the format your code expects ("url")
+                Map<String, Object> result = new HashMap<>();
+                result.put("url", checkoutUrl);
+                result.put("id", sessionId);
+
+                return result;
+            } else {
+                throw new RuntimeException("Aza session creation failed: " + responseBody);
+            }
+
         } catch (Exception e) {
             System.err.println("Aza Error: " + e.getMessage());
             throw new RuntimeException("Failed to create Aza session: " + e.getMessage());

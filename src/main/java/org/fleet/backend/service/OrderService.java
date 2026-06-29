@@ -11,6 +11,7 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.logging.Logger;
 
 @Service
 public class OrderService {
@@ -21,6 +22,7 @@ public class OrderService {
     private final QRCodeService qrCodeService;
     private final PaymentService paymentService;
     private final AzaPaymentService azaPaymentService;
+    private static final Logger logger = Logger.getLogger(OrderService.class.getName());
 
     public OrderService(OrderRepository orderRepository,
                         UserService userService,
@@ -426,5 +428,27 @@ public class OrderService {
         );
 
         return cancelledOrder;
+    }
+
+    @Transactional
+    public void markOrderAsPaidBySessionId(String sessionId) {
+        // Find order by paymentSessionId
+        Order order = orderRepository.findByPaymentSessionId(sessionId)
+                .orElseThrow(() -> new RuntimeException("Order not found with sessionId: " + sessionId));
+
+        // Update payment status
+        order.setPaymentStatus(PaymentStatus.PAID);
+        orderRepository.save(order);
+
+        // Send notification to customer
+        notificationService.createNotification(
+                order.getCustomer().getUser().getId(),
+                "Payment Successful!",
+                "Your payment for order #" + order.getOrderNumber() + " has been confirmed.",
+                "PAYMENT_SUCCESS",
+                order.getId()
+        );
+
+        logger.info("Order " + order.getOrderNumber() + " marked as PAID via webhook");
     }
 }

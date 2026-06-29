@@ -44,7 +44,7 @@ public class SecurityConfig {
                 .csrf(csrf -> csrf.disable())
                 .cors(cors -> cors.configurationSource(corsConfigurationSource))
                 .authorizeHttpRequests(auth -> auth
-                        .requestMatchers("/auth/register/**", "/auth/login", "/uploads/**").permitAll()
+                        .requestMatchers("/auth/register/**", "/auth/login", "/uploads/**", "/webhooks/aza").permitAll()
                         .anyRequest().authenticated()
                 )
                 .exceptionHandling( exp -> exp
