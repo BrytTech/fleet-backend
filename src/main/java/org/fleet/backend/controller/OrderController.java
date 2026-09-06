@@ -36,13 +36,16 @@ public class OrderController {
     @PostMapping("/estimate")
     @PreAuthorize("hasRole('CUSTOMER')")
     public ResponseEntity<?> estimatePrice(@Valid @RequestBody CreateOrderRequest request) {
-        Store pickupStore = storeService.getStoreById(request.pickupStoreId());
-        Store dropoffStore = storeService.getStoreById(request.dropoffStoreId());
+        Store pickupStore = request.pickupStoreId() != null ? storeService.getStoreById(request.pickupStoreId()) : null;
+        Store dropoffStore = request.dropoffStoreId() != null ? storeService.getStoreById(request.dropoffStoreId()) : null;
 
-        double distance = calculateDistance(
-                pickupStore.getLatitude(), pickupStore.getLongitude(),
-                dropoffStore.getLatitude(), dropoffStore.getLongitude()
-        );
+        double distance = 5.0;
+        if (pickupStore != null && dropoffStore != null) {
+            distance = calculateDistance(
+                    pickupStore.getLatitude(), pickupStore.getLongitude(),
+                    dropoffStore.getLatitude(), dropoffStore.getLongitude()
+            );
+        }
 
         BigDecimal price = orderService.calculatePrice(
                 request.packageWeight(),
@@ -76,7 +79,12 @@ public class OrderController {
                 request.dropoffStoreId(),
                 request.packageDescription(),
                 request.packageWeight(),
-                request.vehicleType()
+                request.vehicleType(),
+                request.recipientName(),
+                request.recipientPhone(),
+                request.senderName(),
+                request.senderPhone(),
+                request.packagePhotos()
         );
         return ResponseEntity.ok(order);
     }

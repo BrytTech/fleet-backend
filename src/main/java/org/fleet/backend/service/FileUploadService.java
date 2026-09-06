@@ -32,7 +32,7 @@ public class FileUploadService {
             Path filePath = uploadPath.resolve(newFilename);
             file.transferTo(filePath.toFile());
 
-            return BASE_URL + "/uploads/" + newFilename;
+            return "/uploads/" + newFilename;
 
         } catch (IOException e) {
             throw new RuntimeException("Failed to upload file: " + e.getMessage());

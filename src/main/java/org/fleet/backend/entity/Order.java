@@ -49,6 +49,14 @@ public class Order {
     private BigDecimal distance;
     private BigDecimal price;
 
+    private String recipientName;
+    private String recipientPhone;
+    private String senderName;
+    private String senderPhone;
+
+    @Column(columnDefinition = "TEXT")
+    private String packagePhotos;
+
     @Enumerated(EnumType.STRING)
     @Column(name = "vehicle_type", nullable = false)
     private VehicleType vehicleType;

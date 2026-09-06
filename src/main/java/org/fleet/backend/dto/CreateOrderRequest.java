@@ -8,10 +8,8 @@ import org.fleet.backend.entity.VehicleType;
 import java.math.BigDecimal;
 
 public record CreateOrderRequest(
-        @NotNull(message = "Pickup store is required")
         Long pickupStoreId,
 
-        @NotNull(message = "Dropoff store is required")
         Long dropoffStoreId,
 
         @NotBlank(message = "Please provide package description")
@@ -22,6 +20,12 @@ public record CreateOrderRequest(
         BigDecimal packageWeight,
 
         @NotNull(message = "Vehicle type is required")
-        VehicleType vehicleType
+        VehicleType vehicleType,
+
+        String recipientName,
+        String recipientPhone,
+        String senderName,
+        String senderPhone,
+        Object packagePhotos
 ) {
 }

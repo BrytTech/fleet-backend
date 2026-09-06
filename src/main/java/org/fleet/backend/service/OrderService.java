@@ -47,7 +47,12 @@ public class OrderService {
             Long dropoffStoreId,
             String packageDescription,
             BigDecimal packageWeight,
-            VehicleType vehicleType
+            VehicleType vehicleType,
+            String recipientName,
+            String recipientPhone,
+            String senderName,
+            String senderPhone,
+            Object packagePhotos
     ) {
         if (vehicleType == null) {
             throw new IllegalArgumentException("Vehicle type is required");
@@ -57,34 +62,39 @@ public class OrderService {
         String customerEmail = SecurityContextHolder.getContext().getAuthentication().getName();
         User customer = userService.findUserByEmail(customerEmail);
 
-        // 2. Validate stores
-        Store pickupStore = storeService.getStoreById(pickupStoreId);
-        Store dropoffStore = storeService.getStoreById(dropoffStoreId);
+        // 2. Validate stores if provided
+        Store pickupStore = pickupStoreId != null ? storeService.getStoreById(pickupStoreId) : null;
+        Store dropoffStore = dropoffStoreId != null ? storeService.getStoreById(dropoffStoreId) : null;
 
-        if (!pickupStore.getIsActive() || !dropoffStore.getIsActive()) {
-            throw new RuntimeException("One or both stores are not active");
-        }
+        if (pickupStore != null && dropoffStore != null) {
+            if (!pickupStore.getIsActive() || !dropoffStore.getIsActive()) {
+                throw new RuntimeException("One or both stores are not active");
+            }
 
-        if (pickupStoreId.equals(dropoffStoreId)) {
-            throw new RuntimeException("Pickup and dropoff stores must be different");
+            if (pickupStoreId.equals(dropoffStoreId)) {
+                throw new RuntimeException("Pickup and dropoff stores must be different");
+            }
         }
 
         // 3. Generate order number
         String orderNumber = "ORD-" + UUID.randomUUID();
 
         // 4. Calculate distance and price
-        double distance = calculateDistance(
-                pickupStore.getLatitude(), pickupStore.getLongitude(),
-                dropoffStore.getLatitude(), dropoffStore.getLongitude()
-        );
+        double distance = 5.0;
+        if (pickupStore != null && dropoffStore != null) {
+            distance = calculateDistance(
+                    pickupStore.getLatitude(), pickupStore.getLongitude(),
+                    dropoffStore.getLatitude(), dropoffStore.getLongitude()
+            );
+        }
         BigDecimal price = calculatePrice(packageWeight, distance, vehicleType);
 
         // 5. Create order
         Order order = new Order();
         order.setOrderNumber(orderNumber);
         order.setCustomer(customer.getCustomerProfile());
-        order.setPickupStore(pickupStore);
-        order.setDropoffStore(dropoffStore);
+        if (pickupStore != null) order.setPickupStore(pickupStore);
+        if (dropoffStore != null) order.setDropoffStore(dropoffStore);
         order.setPackageDescription(packageDescription);
         order.setPackageWeight(packageWeight);
         order.setDistance(BigDecimal.valueOf(distance));
@@ -92,6 +102,19 @@ public class OrderService {
         order.setVehicleType(vehicleType);
         order.setOrderStatus(OrderStatus.PENDING);
         order.setPaymentStatus(PaymentStatus.PENDING);
+        order.setRecipientName(recipientName);
+        order.setRecipientPhone(recipientPhone);
+        order.setSenderName(senderName != null ? senderName : (customer.getFirstName() + " " + customer.getLastName()).trim());
+        order.setSenderPhone(senderPhone != null ? senderPhone : customer.getPhone());
+
+        if (packagePhotos != null) {
+            try {
+                com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+                order.setPackagePhotos(mapper.writeValueAsString(packagePhotos));
+            } catch (Exception e) {
+                order.setPackagePhotos(packagePhotos.toString());
+            }
+        }
 
         // 6. Save order first to get ID
         Order savedOrder = orderRepository.save(order);
@@ -184,12 +207,13 @@ public class OrderService {
         Order order = orderRepository.findById(orderId)
                 .orElseThrow(() -> new RuntimeException("Order not found"));
 
-        if (order.getRider() == null || !order.getRider().getId().equals(rider.getRiderProfile().getId())) {
-            throw new RuntimeException("You are not assigned to this order");
+        if (order.getRider() == null) {
+            order.setRider(rider.getRiderProfile());
+            order.setAssignedAt(LocalDateTime.now());
         }
 
-        if (order.getOrderStatus() != OrderStatus.ASSIGNED) {
-            throw new RuntimeException("Order cannot be picked up. Current status: " + order.getOrderStatus());
+        if (order.getOrderStatus() == OrderStatus.PICKED_UP || order.getOrderStatus() == OrderStatus.DELIVERED) {
+            return order;
         }
 
         order.setOrderStatus(OrderStatus.PICKED_UP);
@@ -198,13 +222,17 @@ public class OrderService {
 
         Order updatedOrder = orderRepository.save(order);
 
-        notificationService.createNotification(
-                order.getCustomer().getUser().getId(),
-                "Package Picked Up!",
-                "Your package for order #" + updatedOrder.getOrderNumber() + " has been picked up.",
-                "ORDER_PICKED_UP",
-                updatedOrder.getId()
-        );
+        try {
+            notificationService.createNotification(
+                    order.getCustomer().getUser().getId(),
+                    "Package Picked Up!",
+                    "Your package for order #" + updatedOrder.getOrderNumber() + " has been picked up.",
+                    "ORDER_PICKED_UP",
+                    updatedOrder.getId()
+            );
+        } catch (Exception e) {
+            logger.warning("Notification send failed: " + e.getMessage());
+        }
 
         return updatedOrder;
     }
@@ -218,12 +246,13 @@ public class OrderService {
         Order order = orderRepository.findById(orderId)
                 .orElseThrow(() -> new RuntimeException("Order not found"));
 
-        if (order.getRider() == null || !order.getRider().getId().equals(rider.getRiderProfile().getId())) {
-            throw new RuntimeException("You are not assigned to this order");
+        if (order.getRider() == null) {
+            order.setRider(rider.getRiderProfile());
+            order.setAssignedAt(LocalDateTime.now());
         }
 
-        if (order.getOrderStatus() != OrderStatus.PICKED_UP) {
-            throw new RuntimeException("Order cannot be delivered. Current status: " + order.getOrderStatus());
+        if (order.getOrderStatus() == OrderStatus.DELIVERED) {
+            return order;
         }
 
         order.setOrderStatus(OrderStatus.DELIVERED);
@@ -320,7 +349,7 @@ public class OrderService {
 
     //RIDER METHODS
     public List<Order> getAvailableOrders() {
-        return orderRepository.findByOrderStatus(OrderStatus.PENDING);
+        return orderRepository.findByOrderStatusAndPaymentStatus(OrderStatus.PENDING, PaymentStatus.PAID);
     }
 
     @Transactional
