@@ -1,0 +1,4 @@
+# Runs before the application context exists, so a platform-supplied
+# DATABASE_URL can be translated into the jdbc properties Boot expects.
+org.springframework.boot.env.EnvironmentPostProcessor=\
+org.fleet.backend.config.DatabaseUrlEnvironmentPostProcessor
