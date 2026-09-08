@@ -113,9 +113,14 @@ public class OrderController {
         String riderEmail = SecurityContextHolder.getContext().getAuthentication().getName();
         User rider = userService.findUserByEmail(riderEmail);
 
+        if (rider == null || rider.getRiderProfile() == null) {
+            throw new RuntimeException("Rider profile not found for the authenticated user");
+        }
+
         Order order = orderService.getOrderById(id);
 
-        if (order.getRider() == null || !order.getRider().getId().equals(rider.getRiderProfile().getId())) {
+        if (order.getRider() == null || order.getRider().getId() == null
+                || !order.getRider().getId().equals(rider.getRiderProfile().getId())) {
             throw new RuntimeException("You are not assigned to this order");
         }
 
