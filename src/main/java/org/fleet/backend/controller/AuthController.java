@@ -91,6 +91,12 @@ public class AuthController {
         String token = authService.authenticate(request.email(), request.password());
         User user = userService.findUserByEmail(request.email());
 
+        if (user == null) {
+            Map<String, String> errorResponse = new HashMap<>();
+            errorResponse.put("error", "Unable to retrieve user details after login");
+            return ResponseEntity.status(500).body(errorResponse);
+        }
+
         Map<String, String> response = new HashMap<>();
         response.put("token",  token);
         response.put("message", "Login successful");

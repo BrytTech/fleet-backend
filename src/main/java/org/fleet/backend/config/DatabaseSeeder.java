@@ -23,25 +23,27 @@ public class DatabaseSeeder implements CommandLineRunner {
 
 
     @Override
-    public void run(String... args) throws Exception {
+    public void run(String... args) {
+        try {
+            if (!userRepository.existsByEmail("admin@fleet.com")){
+                User admin = new User();
 
+                admin.setFirstName("System");
+                admin.setLastName("Admin");
+                admin.setPassword(passwordEncoder.encode("fleet123"));
+                admin.setEmail("admin@fleet.com");
+                admin.setPhone("0000000000");
+                admin.setRole(Role.ADMIN);
+                admin.setActive(true);
 
-        if (!userRepository.existsByEmail("admin@fleet.com")){
-            User admin = new User();
+                userRepository.save(admin);
 
-            admin.setFirstName("System");
-            admin.setLastName("Admin");
-            admin.setPassword(passwordEncoder.encode("fleet123"));
-            admin.setEmail("admin@fleet.com");
-            admin.setPhone("0000000000");
-            admin.setRole(Role.ADMIN);
-            admin.setActive(true);
-
-            userRepository.save(admin);
-
-            logger.info("Admin created successfully");
-        } else {
-            logger.info("Admin user already exist, skipping seed");
+                logger.info("Admin created successfully");
+            } else {
+                logger.info("Admin user already exist, skipping seed");
+            }
+        } catch (Exception e) {
+            logger.error("Database seeding failed, continuing startup without seed data", e);
         }
     }
 }
