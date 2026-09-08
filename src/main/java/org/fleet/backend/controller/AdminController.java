@@ -29,6 +29,25 @@ public class AdminController {
         this.orderService = orderService;
     }
 
+    /**
+     * Turns a customer account into a B2B partner, or back again.
+     *
+     * <p>Admin-only and deliberately explicit: a partner's deliveries are billed
+     * on account rather than paid for at a checkout page, so granting this is
+     * agreeing to invoice somebody. It is not something an account should be
+     * able to award itself at sign-up.
+     */
+    @PostMapping("/partners/{userId}")
+    public ResponseEntity<Map<String, Object>> setPartner(
+            @PathVariable Long userId,
+            @RequestParam(defaultValue = "true") boolean enabled) {
+        User user = userService.setPartner(userId, enabled);
+        return ResponseEntity.ok(Map.of(
+                "id", user.getId(),
+                "email", user.getEmail(),
+                "partner", user.isPartner()));
+    }
+
     //Get all riders PENDING verification
     @GetMapping("/riders/pending")
     public ResponseEntity<List<RiderProfile>> getPendingRiders(){

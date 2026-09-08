@@ -36,26 +36,25 @@ public class OrderController {
     @PostMapping("/estimate")
     @PreAuthorize("hasRole('CUSTOMER')")
     public ResponseEntity<?> estimatePrice(@Valid @RequestBody CreateOrderRequest request) {
-        Store pickupStore = request.pickupStoreId() != null ? storeService.getStoreById(request.pickupStoreId()) : null;
-        Store dropoffStore = request.dropoffStoreId() != null ? storeService.getStoreById(request.dropoffStoreId()) : null;
+        // Same resolution the booking uses, so a quote and the order placed from
+        // it cannot disagree about where the parcel is going or what it costs.
+        OrderService.Endpoint pickup =
+                orderService.resolveEndpoint(request.pickupStoreId(), request.pickupAddress(), "pickup");
+        OrderService.Endpoint dropoff =
+                orderService.resolveEndpoint(request.dropoffStoreId(), request.dropoffAddress(), "dropoff");
 
-        double distance = 5.0;
-        if (pickupStore != null && dropoffStore != null) {
-            distance = calculateDistance(
-                    pickupStore.getLatitude(), pickupStore.getLongitude(),
-                    dropoffStore.getLatitude(), dropoffStore.getLongitude()
-            );
-        }
+        double distance = calculateDistance(
+                pickup.latitude(), pickup.longitude(),
+                dropoff.latitude(), dropoff.longitude());
 
         BigDecimal price = orderService.calculatePrice(
-                request.packageWeight(),
-                distance,
-                request.vehicleType()
-        );
+                request.packageWeight(), distance, request.vehicleType());
 
         Map<String, Object> response = new HashMap<>();
         response.put("price", price);
         response.put("distance", distance);
+        response.put("currency", "GHS");
+        response.put("vehicleType", request.vehicleType());
 
         return ResponseEntity.ok(response);
     }
@@ -74,19 +73,7 @@ public class OrderController {
     @PostMapping
     @PreAuthorize("hasRole('CUSTOMER')")
     public ResponseEntity<Order> createOrder(@Valid @RequestBody CreateOrderRequest request) {
-        Order order = orderService.createOrder(
-                request.pickupStoreId(),
-                request.dropoffStoreId(),
-                request.packageDescription(),
-                request.packageWeight(),
-                request.vehicleType(),
-                request.recipientName(),
-                request.recipientPhone(),
-                request.senderName(),
-                request.senderPhone(),
-                request.packagePhotos()
-        );
-        return ResponseEntity.ok(order);
+        return ResponseEntity.ok(orderService.createOrder(request));
     }
 
     @GetMapping("/me")

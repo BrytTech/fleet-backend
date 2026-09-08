@@ -1,6 +1,8 @@
 package org.fleet.backend.service;
 
 import jakarta.transaction.Transactional;
+import org.fleet.backend.dto.AddressDto;
+import org.fleet.backend.dto.CreateOrderRequest;
 import org.fleet.backend.entity.*;
 import org.fleet.backend.repository.OrderRepository;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -10,6 +12,7 @@ import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.logging.Logger;
 
@@ -22,6 +25,7 @@ public class OrderService {
     private final QRCodeService qrCodeService;
     private final PaymentService paymentService;
     private final AzaPaymentService azaPaymentService;
+    private final PartnerWebhookService partnerWebhookService;
     private static final Logger logger = Logger.getLogger(OrderService.class.getName());
 
     public OrderService(OrderRepository orderRepository,
@@ -30,7 +34,8 @@ public class OrderService {
                         StoreService storeService,
                         QRCodeService qrCodeService,
                         PaymentService paymentService,
-                        AzaPaymentService azaPaymentService) {
+                        AzaPaymentService azaPaymentService,
+                        PartnerWebhookService partnerWebhookService) {
         this.orderRepository = orderRepository;
         this.userService = userService;
         this.notificationService = notificationService;
@@ -38,23 +43,13 @@ public class OrderService {
         this.qrCodeService = qrCodeService;
         this.paymentService = paymentService;
         this.azaPaymentService = azaPaymentService;
+        this.partnerWebhookService = partnerWebhookService;
     }
 
     //CREATE ORDER
     @Transactional
-    public Order createOrder(
-            Long pickupStoreId,
-            Long dropoffStoreId,
-            String packageDescription,
-            BigDecimal packageWeight,
-            VehicleType vehicleType,
-            String recipientName,
-            String recipientPhone,
-            String senderName,
-            String senderPhone,
-            Object packagePhotos
-    ) {
-        if (vehicleType == null) {
+    public Order createOrder(CreateOrderRequest request) {
+        if (request.vehicleType() == null) {
             throw new IllegalArgumentException("Vehicle type is required");
         }
 
@@ -62,57 +57,75 @@ public class OrderService {
         String customerEmail = SecurityContextHolder.getContext().getAuthentication().getName();
         User customer = userService.findUserByEmail(customerEmail);
 
-        // 2. Validate stores if provided
-        Store pickupStore = pickupStoreId != null ? storeService.getStoreById(pickupStoreId) : null;
-        Store dropoffStore = dropoffStoreId != null ? storeService.getStoreById(dropoffStoreId) : null;
-
-        if (pickupStore != null && dropoffStore != null) {
-            if (!pickupStore.getIsActive() || !dropoffStore.getIsActive()) {
-                throw new RuntimeException("One or both stores are not active");
-            }
-
-            if (pickupStoreId.equals(dropoffStoreId)) {
-                throw new RuntimeException("Pickup and dropoff stores must be different");
+        // 2. A repeated external id is a retry, not a second parcel. Returning the
+        //    original is what makes a partner's booking call safe to send again
+        //    after a timeout, when we cannot know whether the first one landed.
+        if (request.externalOrderId() != null && !request.externalOrderId().isBlank()) {
+            Optional<Order> existing = orderRepository.findByExternalOrderId(request.externalOrderId());
+            if (existing.isPresent()) {
+                logger.info("Returning existing order for externalOrderId " + request.externalOrderId());
+                return existing.get();
             }
         }
 
-        // 3. Generate order number
-        String orderNumber = "ORD-" + UUID.randomUUID();
+        // 3. Resolve both ends of the journey
+        Endpoint pickup = resolveEndpoint(request.pickupStoreId(), request.pickupAddress(), "pickup");
+        Endpoint dropoff = resolveEndpoint(request.dropoffStoreId(), request.dropoffAddress(), "dropoff");
 
-        // 4. Calculate distance and price
-        double distance = 5.0;
-        if (pickupStore != null && dropoffStore != null) {
-            distance = calculateDistance(
-                    pickupStore.getLatitude(), pickupStore.getLongitude(),
-                    dropoffStore.getLatitude(), dropoffStore.getLongitude()
-            );
+        if (pickup.store() != null && dropoff.store() != null
+                && pickup.store().getId().equals(dropoff.store().getId())) {
+            throw new IllegalArgumentException("Pickup and dropoff stores must be different");
         }
-        BigDecimal price = calculatePrice(packageWeight, distance, vehicleType);
+
+        // 4. Distance and price, always from real coordinates
+        double distance = calculateDistance(
+                pickup.latitude(), pickup.longitude(),
+                dropoff.latitude(), dropoff.longitude());
+        BigDecimal price = calculatePrice(request.packageWeight(), distance, request.vehicleType());
 
         // 5. Create order
         Order order = new Order();
-        order.setOrderNumber(orderNumber);
+        order.setOrderNumber("ORD-" + UUID.randomUUID());
         order.setCustomer(customer.getCustomerProfile());
-        if (pickupStore != null) order.setPickupStore(pickupStore);
-        if (dropoffStore != null) order.setDropoffStore(dropoffStore);
-        order.setPackageDescription(packageDescription);
-        order.setPackageWeight(packageWeight);
+        order.setExternalOrderId(
+                request.externalOrderId() == null || request.externalOrderId().isBlank()
+                        ? null : request.externalOrderId());
+
+        order.setPickupStore(pickup.store());
+        order.setPickupAddress(pickup.addressLine());
+        order.setPickupCity(pickup.city());
+        order.setPickupLatitude(pickup.latitude());
+        order.setPickupLongitude(pickup.longitude());
+
+        order.setDropoffStore(dropoff.store());
+        order.setDropoffAddress(dropoff.addressLine());
+        order.setDropoffCity(dropoff.city());
+        order.setDropoffLatitude(dropoff.latitude());
+        order.setDropoffLongitude(dropoff.longitude());
+
+        order.setPackageDescription(request.packageDescription());
+        order.setPackageWeight(request.packageWeight());
         order.setDistance(BigDecimal.valueOf(distance));
         order.setPrice(price);
-        order.setVehicleType(vehicleType);
+        order.setVehicleType(request.vehicleType());
         order.setOrderStatus(OrderStatus.PENDING);
-        order.setPaymentStatus(PaymentStatus.PENDING);
-        order.setRecipientName(recipientName);
-        order.setRecipientPhone(recipientPhone);
-        order.setSenderName(senderName != null ? senderName : (customer.getFirstName() + " " + customer.getLastName()).trim());
-        order.setSenderPhone(senderPhone != null ? senderPhone : customer.getPhone());
 
-        if (packagePhotos != null) {
+        // The recipient named on the drop-off address wins over the top-level
+        // one: it is the more specific statement of who opens the door.
+        order.setRecipientName(firstNonBlank(
+                dropoff.recipientName(), request.recipientName()));
+        order.setRecipientPhone(firstNonBlank(
+                dropoff.recipientPhone(), request.recipientPhone()));
+        order.setSenderName(firstNonBlank(request.senderName(),
+                (customer.getFirstName() + " " + customer.getLastName()).trim()));
+        order.setSenderPhone(firstNonBlank(request.senderPhone(), customer.getPhone()));
+
+        if (request.packagePhotos() != null) {
             try {
                 com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
-                order.setPackagePhotos(mapper.writeValueAsString(packagePhotos));
+                order.setPackagePhotos(mapper.writeValueAsString(request.packagePhotos()));
             } catch (Exception e) {
-                order.setPackagePhotos(packagePhotos.toString());
+                order.setPackagePhotos(request.packagePhotos().toString());
             }
         }
 
@@ -120,13 +133,10 @@ public class OrderService {
         Order savedOrder = orderRepository.save(order);
 
         // 7. Generate QR code
-        String qrCode = qrCodeService.generateQRCode(savedOrder);
-        savedOrder.setQrCode(qrCode);
-
-        // 8. Save again with QR code
+        savedOrder.setQrCode(qrCodeService.generateQRCode(savedOrder));
         Order finalOrder = orderRepository.save(savedOrder);
 
-        // 9. Send notification
+        // 8. Notify
         notificationService.createNotification(
                 customer.getId(),
                 "Order Placed!",
@@ -135,7 +145,20 @@ public class OrderService {
                 finalOrder.getId()
         );
 
-        // 10. Create Aza checkout session
+        // 9. Settle it
+        if (customer.isPartner()) {
+            // Billed on account. Riders are only offered orders that are already
+            // paid, so a partner order routed through a hosted checkout page —
+            // which no one is sitting in front of — would never reach a rider.
+            finalOrder.setPaymentStatus(PaymentStatus.PAID);
+            finalOrder.setPaymentReference("ON_ACCOUNT:" + customer.getEmail());
+            logger.info("Partner order " + finalOrder.getOrderNumber() + " settled on account");
+            Order settled = orderRepository.save(finalOrder);
+            publish(settled, "order.created");
+            return settled;
+        }
+
+        finalOrder.setPaymentStatus(PaymentStatus.PENDING);
         try {
             Map<String, Object> session = azaPaymentService.createCheckoutSession(
                     finalOrder.getOrderNumber(),
@@ -150,9 +173,72 @@ public class OrderService {
 
         } catch (Exception e) {
             // If Aza fails, order is still created but payment not initiated
-            System.err.println("Failed to create Aza session: " + e.getMessage());
-            return finalOrder;
+            logger.warning("Failed to create Aza session: " + e.getMessage());
+            return orderRepository.save(finalOrder);
         }
+    }
+
+    /** One end of a journey, however it was given to us. */
+    public record Endpoint(
+            Store store,
+            String addressLine,
+            String city,
+            double latitude,
+            double longitude,
+            String recipientName,
+            String recipientPhone
+    ) {}
+
+    /**
+     * Resolves one end of a journey from either a store id or a loose address.
+     *
+     * <p>Exactly one of the two is required. Accepting neither used to be legal
+     * and silently priced the delivery as if it were five kilometres, which
+     * charges a real customer a made-up amount; a caller that says nothing about
+     * where the parcel goes is a caller with a bug, and it should hear about it.
+     */
+    public Endpoint resolveEndpoint(Long storeId, AddressDto address, String which) {
+        boolean hasStore = storeId != null;
+        boolean hasAddress = address != null && address.hasCoordinates();
+
+        if (hasStore && hasAddress) {
+            throw new IllegalArgumentException(
+                    "Give " + which + " either a store id or an address, not both");
+        }
+        if (!hasStore && !hasAddress) {
+            throw new IllegalArgumentException(
+                    "The " + which + " needs a store id, or an address with latitude and longitude");
+        }
+
+        if (hasStore) {
+            Store store = storeService.getStoreById(storeId);
+            if (store.getIsActive() == null || !store.getIsActive()) {
+                throw new IllegalArgumentException("The " + which + " store is not active");
+            }
+            return new Endpoint(store, store.getAddress(), store.getCity(),
+                    store.getLatitude(), store.getLongitude(), null, null);
+        }
+
+        return new Endpoint(null, address.addressLine(), address.city(),
+                address.latitude(), address.longitude(),
+                address.recipientName(), address.recipientPhone());
+    }
+
+    private static String firstNonBlank(String a, String b) {
+        return a != null && !a.isBlank() ? a : b;
+    }
+
+    /**
+     * Bumps the order's event counter and tells any registered partner.
+     *
+     * <p>The increment is saved before the callback goes out, so a partner that
+     * receives two events never sees the same sequence number twice even if the
+     * send itself is retried.
+     */
+    private void publish(Order order, String event) {
+        order.setWebhookSeq(order.getWebhookSeq() + 1);
+        orderRepository.save(order);
+        partnerWebhookService.publish(order, event);
     }
 
     //CALCULATE DISTANCE
@@ -234,6 +320,7 @@ public class OrderService {
             logger.warning("Notification send failed: " + e.getMessage());
         }
 
+        publish(updatedOrder, "order.picked_up");
         return updatedOrder;
     }
 
@@ -269,6 +356,7 @@ public class OrderService {
                 updatedOrder.getId()
         );
 
+        publish(updatedOrder, "order.delivered");
         return updatedOrder;
     }
 
@@ -302,6 +390,7 @@ public class OrderService {
                 confirmedOrder.getId()
         );
 
+        publish(confirmedOrder, "order.customer_confirmed");
         return confirmedOrder;
     }
 
@@ -344,6 +433,7 @@ public class OrderService {
                 cancelledOrder.getId()
         );
 
+        publish(cancelledOrder, "order.cancelled");
         return cancelledOrder;
     }
 
@@ -378,6 +468,7 @@ public class OrderService {
                 updatedOrder.getId()
         );
 
+        publish(updatedOrder, "order.assigned");
         return updatedOrder;
     }
 
@@ -406,6 +497,7 @@ public class OrderService {
                 cancelledOrder.getId()
         );
 
+        publish(cancelledOrder, "order.cancelled");
         return cancelledOrder;
     }
 
@@ -456,6 +548,7 @@ public class OrderService {
                 cancelledOrder.getId()
         );
 
+        publish(cancelledOrder, "order.cancelled");
         return cancelledOrder;
     }
 

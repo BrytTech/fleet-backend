@@ -40,6 +40,22 @@ public class User {
     @Column(name = "is_active")
     private boolean isActive;
 
+    /**
+     * A B2B partner account — a business booking deliveries through the API
+     * rather than a person booking one in the app.
+     *
+     * <p>Two things follow from it. A partner's order is settled on account
+     * instead of through an Aza checkout page, because there is nobody at a
+     * screen to pay one; and because riders are only offered orders that are
+     * already paid, a partner order that waited for a checkout would never
+     * reach a rider at all.
+     */
+    // The default is part of the column definition, not just the field: adding a
+    // plain NOT NULL column to a table that already has rows fails, and every
+    // existing account predates this flag.
+    @Column(name = "is_partner", nullable = false, columnDefinition = "boolean not null default false")
+    private boolean partner = false;
+
     //Relationship fields for profiles
     @OneToOne(mappedBy = "user", cascade = CascadeType.ALL, orphanRemoval = true)
     @JsonManagedReference

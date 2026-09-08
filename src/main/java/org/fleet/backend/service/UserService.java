@@ -32,6 +32,18 @@ public class UserService implements UserDetailsService {
         return userRepository.findByEmail(email)
                 .orElseThrow(() -> new RuntimeException("user with " + email + " not found"));
     }
+
+    /** Grants or revokes B2B partner status. Only a customer account can hold it. */
+    public User setPartner(Long userId, boolean enabled) {
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new RuntimeException("user " + userId + " not found"));
+        if (enabled && user.getRole() != Role.CUSTOMER) {
+            throw new IllegalArgumentException(
+                    "Only a customer account can be a partner; " + user.getEmail() + " is a " + user.getRole());
+        }
+        user.setPartner(enabled);
+        return userRepository.save(user);
+    }
     @Override
     public UserDetails loadUserByUsername(String email) throws UsernameNotFoundException {
         User user = findUserByEmail(email);
