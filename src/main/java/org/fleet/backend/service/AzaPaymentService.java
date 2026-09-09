@@ -14,15 +14,24 @@ import java.util.Map;
 @Service
 public class AzaPaymentService {
 
-    @Value("${aza.api.key}")
+    @Value("${aza.api.key:}")
     private String apiKey;
 
-    @Value("${aza.api.url}")
+    @Value("${aza.api.url:}")
     private String apiUrl;
 
     private final RestTemplate restTemplate = new RestTemplate();
 
     public Map<String, Object> createCheckoutSession(String orderNumber, String amount, String customerEmail) {
+        // Checked here rather than at startup. An unset payment key should stop a
+        // payment, not the whole courier service: riders still need to be
+        // dispatched, parcels still need tracking, and B2B partner orders are
+        // settled on account and never touch Aza at all.
+        if (apiKey == null || apiKey.isBlank() || apiUrl == null || apiUrl.isBlank()) {
+            throw new IllegalStateException(
+                    "Aza is not configured — set AZA_API_KEY and AZA_API_URL to take payments");
+        }
+
         String url = apiUrl + "/sessions";
 
         HttpHeaders headers = new HttpHeaders();
@@ -37,7 +46,6 @@ public class AzaPaymentService {
         requestBody.put("success_url", "fleet://payment/success");
         requestBody.put("cancel_url", "fleet://payment/cancel");
 
-        System.out.println("Aza API Key: " + apiKey.substring(0, 10) + "...");
         System.out.println("Aza Request: " + requestBody);
 
         HttpEntity<Map<String, Object>> request = new HttpEntity<>(requestBody, headers);
